@@ -1,0 +1,59 @@
+from fastapi import FastAPI, Depends, HTTPException, Request, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+from db.database import SessionLocal, engine
+from db import models, schemas
+
+models.Base.metadata.create_all(bind=engine)
+
+app = FastAPI()
+
+
+templates = Jinja2Templates(directory="templates")
+
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request, db: Session = Depends(get_db)):
+    items = db.query(models.Item).all()
+    return templates.TemplateResponse("index.html", {"request": request, "items": items})
+
+@app.post("/add")
+def create_item(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(...),
+    price: float = Form(...),
+    quantity: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    item_create = schemas.ItemCreate(name=name, description=description, price=price, quantity=quantity)
+    db_item = models.Item(**item_create.dict())
+    db.add(db_item)
+    db.commit()
+    db.refresh(db_item)
+    return RedirectResponse(url="/", status_code=303)
+
+@app.post("/delete/{item_id}")
+def delete_item(item_id: int, db: Session = Depends(get_db)):
+    db_item = db.query(models.Item).filter(models.Item.id == item_id).first()
+    if db_item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.delete(db_item)
+    db.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+@app.get("/items/{item_id}", response_class=HTMLResponse)
+def read_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+    item = db.query(models.Item).filter(models.Item.id == item_id).first()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return templates.TemplateResponse("item.html", {"request": request, "item": item})
